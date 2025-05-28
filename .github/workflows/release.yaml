@@ -2,11 +2,12 @@ name: Release
 
 on:
   push:
-    branches:
-      - master
+    tags:
+      - 'v*'  # triggers on tags like v1.0.0
 
 jobs:
-  release:
+  build:
+    name: Build and Release
     runs-on: ubuntu-latest
 
     steps:
@@ -22,20 +23,9 @@ jobs:
       - name: Build release binary
         run: cargo build --release
 
-      - name: Create or update local 'latest' tag
-        run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git tag -f latest
-          git push origin latest --force
-
-      - name: Create GitHub Release
+      - name: Upload binary to release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: latest
-          name: Latest Build
-          draft: false
-          prerelease: false
           files: target/release/unica_sport_bot
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

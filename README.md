@@ -28,7 +28,7 @@ A Telegram bot that notifies users when new events are published on the
 
 ## Commands
 
-    -`/help` – Show available commands
-    -`/subscribe` – Start receiving notifications
-    -`/unsubscribe` – Stop receiving notifications
-    -`/events` – View the current list of known events
+- `/help` – Show available commands
+- `/subscribe` – Start receiving notifications
+- `/unsubscribe` – Stop receiving notifications
+- `/events` – View the current list of known events

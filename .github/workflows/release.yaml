@@ -22,7 +22,7 @@ jobs:
       - name: Build release binary
         run: cargo build --release
 
-      - name: Create/Update GitHub Release
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: latest
@@ -31,4 +31,4 @@ jobs:
           prerelease: false
           files: target/release/unica_sport_bot
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

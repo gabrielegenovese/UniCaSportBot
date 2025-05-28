@@ -1,11 +1,25 @@
 use once_cell::sync::Lazy;
 use scraper::{Html, Selector};
+use std::fmt;
 use std::sync::Mutex;
 use teloxide::{prelude::*, types::Chat, utils::command::BotCommands};
 use tokio::time::{Duration, sleep};
+use regex::Regex;
+
+#[derive(PartialEq, Clone)]
+struct Event {
+    title: String,
+    date: String,
+}
+
+impl fmt::Display for Event {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Event: {} ({})", self.title, self.date)
+    }
+}
 
 static SUB_LIST: Lazy<Mutex<Vec<ChatId>>> = Lazy::new(|| Mutex::new(Vec::new()));
-static EVENT_LIST: Lazy<Mutex<Vec<String>>> = Lazy::new(|| Mutex::new(Vec::new()));
+static EVENT_LIST: Lazy<Mutex<Vec<Event>>> = Lazy::new(|| Mutex::new(Vec::new()));
 
 fn add_sub(item: &Chat) {
     let mut list = SUB_LIST.lock().unwrap();
@@ -19,30 +33,56 @@ fn remove_sub(chat_id: ChatId) {
     list.retain(|&id| id != chat_id);
 }
 
-fn add_event(item: String) {
+fn add_event(item: Event) {
     let mut list = EVENT_LIST.lock().unwrap();
     list.push(item);
 }
 
-async fn check_website() -> Result<Vec<String>, String> {
+fn remove_items(to_remove: Vec<Event>) {
+    let mut list = EVENT_LIST.lock().unwrap();
+    list.retain(|item| !to_remove.contains(item));
+}
+
+fn clean_old_events(curr_event_list: &Vec<Event>) {
+    let list = EVENT_LIST.lock().unwrap().clone();
+    let diff: Vec<_> = list
+        .into_iter()
+        .filter(|x| !curr_event_list.contains(x))
+        .collect();
+
+    remove_items(diff);
+}
+
+async fn check_website() -> Result<Vec<Event>, String> {
     let url = "https://sport.univ-cotedazur.fr/fr/";
     let res = reqwest::get(url).await.unwrap().text().await.unwrap();
 
-    let mut ev_l: Vec<String> = Vec::new();
+    let mut curr_event_list: Vec<Event> = Vec::new();
 
     let document = Html::parse_document(&res);
     let event_selector = Selector::parse("div.event").unwrap();
     let title_selector = Selector::parse("div.event-info > h3.event-title").unwrap();
+    let date_selector = Selector::parse("div.event-img > p.event-date").unwrap();
 
     for event in document.select(&event_selector) {
-        if let Some(title_el) = event.select(&title_selector).next() {
-            let title = title_el.text().collect::<Vec<_>>().join(" ");
-            ev_l.push(title.trim().to_string());
-            println!("Event Title: {}", title.trim());
-        }
+        let title_el = event.select(&title_selector).next().unwrap();
+        let date_el = event.select(&date_selector).next().unwrap();
+        let title = title_el.text().collect::<Vec<_>>().join(" ");
+        let date_unclean = date_el.text().collect::<Vec<_>>().join(" ").replace('\n', " ");
+        let re = Regex::new(r"\s+").unwrap();
+        let date = re.replace_all(&date_unclean, " ").to_string();
+        let e = Event {
+            title: title.clone(),
+            date: date.clone(),
+        };
+        curr_event_list.push(e);
+        log::info!("Found Event: {} - Date: {}.", title.trim(), date.trim());
+        println!("Event Title: {} - Date: {}", title.trim(), date.trim());
     }
 
-    let diff: Vec<_> = ev_l
+    clean_old_events(&curr_event_list);
+
+    let diff: Vec<_> = curr_event_list
         .into_iter()
         .filter(|x| !EVENT_LIST.lock().unwrap().contains(x))
         .collect();
@@ -78,20 +118,18 @@ async fn main() {
                     for e in new_events {
                         add_event(e.clone());
                         let subs = SUB_LIST.lock().unwrap().clone();
-                        // println!("Adding and sending");
 
                         for id in subs {
-                            // println!("New event: {e}, sent to {id}");
-                            let _ = bot_for_loop
-                                .send_message(id, format!("New event: {}", e))
-                                .await;
+                            log::info!("New {}", e);
+                            println!("New {}", e);
+                            let _ = bot_for_loop.send_message(id, format!("New {}", e)).await;
                         }
                     }
                 }
                 Err(e) => println!("{}", e),
             }
 
-            sleep(Duration::from_secs(10)).await; // check every 10m
+            sleep(Duration::from_secs(600)).await; // check every 10m
         }
     });
 
@@ -105,7 +143,7 @@ async fn main() {
     description = "These commands are supported:"
 )]
 enum Command {
-    #[command(description = "display this text.")]
+    #[command(description = "Display this text.")]
     Help,
     #[command(description = "Subscribe to receive update about the events of UniCa Sport.")]
     Subscribe,
@@ -123,7 +161,9 @@ async fn answer(bot: Bot, msg: Message, cmd: Command) -> ResponseResult<()> {
         }
         Command::Subscribe => {
             add_sub(&msg.chat);
-            bot.send_message(msg.chat.id, format!("You've been successfully subscribed to the list, I'll send you new events when added.")).await?
+            bot.send_message(msg.chat.id, 
+                format!("You've been successfully subscribed to the list, I'll send you new events when added."))
+                .await?
         }
         Command::Unsubscribe => {
             remove_sub(msg.chat.id);

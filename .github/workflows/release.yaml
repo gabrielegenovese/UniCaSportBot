@@ -6,26 +6,26 @@ on:
       - 'v*'  # triggers on tags like v1.0.0
 
 jobs:
-  build:
+  build-and-release:
     name: Build and Release
     runs-on: ubuntu-latest
-
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          override: true
-
+        
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        
       - name: Build release binary
-        run: cargo build --release
-
-      - name: Upload binary to release
-        uses: softprops/action-gh-release@v1
+        run: cargo build --release --verbose
+        
+      - name: Create release
+        uses: softprops/action-gh-release@v2
         with:
           files: target/release/unica_sport_bot
+          generate_release_notes: true
+          draft: false
+          prerelease: false
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

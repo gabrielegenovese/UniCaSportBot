@@ -7,17 +7,13 @@ A Telegram bot that notifies users when new events are published on the
 
 1. **Clone the repository**
 
-   ```bash
-   git clone https://github.com/gabrielegenevese/UniCaSportBot.git
-   cd UniCaSportBot
-   ```
-
 2. **Set the Telegram bot token**
 
    Create a `.env` file or export the token:
 
    ```bash
-   export BOT_TOKEN=your_telegram_bot_token
+   export TELOXIDE_TOKEN=your_telegram_bot_token
+   export UNICABOT_DATA_DIR=chose_a_directory
    ```
 
 3. **Run the bot**
@@ -32,3 +28,4 @@ A Telegram bot that notifies users when new events are published on the
 - `/subscribe` – Start receiving notifications
 - `/unsubscribe` – Stop receiving notifications
 - `/events` – View the current list of known events
+- `/amisubscribed` - Check if you're already subscribed to the notification

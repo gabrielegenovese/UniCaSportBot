@@ -1,11 +1,15 @@
 use once_cell::sync::Lazy;
 use regex::Regex;
 use scraper::{Html, Selector};
-use std::{fmt, sync::Mutex};
+use std::{fmt, fs, sync::Mutex};
 use teloxide::{prelude::*, types::Chat, utils::command::BotCommands};
 use tokio::time::{Duration, sleep};
 
-#[derive(PartialEq, Clone)]
+const SUB_FILE: &str = "subs.json";
+const EVENTS_FILE: &str = "events.json";
+const UNICA_SPORT_URL: &str = "https://sport.univ-cotedazur.fr/fr/";
+
+#[derive(PartialEq, Clone, serde::Serialize, serde::Deserialize)]
 struct Event {
     title: String,
     date: String,
@@ -17,57 +21,90 @@ impl fmt::Display for Event {
     }
 }
 
-static SUB_LIST: Lazy<Mutex<Vec<ChatId>>> = Lazy::new(|| Mutex::new(Vec::new()));
-static EVENT_LIST: Lazy<Mutex<Vec<Event>>> = Lazy::new(|| Mutex::new(Vec::new()));
+static SUB_LIST: Lazy<Mutex<Vec<ChatId>>> = Lazy::new(|| {
+    let data = fs::read_to_string(SUB_FILE)
+        .ok()
+        .and_then(|content| serde_json::from_str(&content).ok())
+        .unwrap_or_default();
+    Mutex::new(data)
+});
+
+static EVENT_LIST: Lazy<Mutex<Vec<Event>>> = Lazy::new(|| {
+    let data = fs::read_to_string(EVENTS_FILE)
+        .ok()
+        .and_then(|content| serde_json::from_str(&content).ok())
+        .unwrap_or_default();
+    Mutex::new(data)
+});
+
+lazy_static::lazy_static! {
+    static ref EVENT_SELECTOR: Selector = Selector::parse("div.event").unwrap();
+    static ref TITLE_SELECTOR: Selector = Selector::parse("div.event-info > h3.event-title").unwrap();
+    static ref DATE_SELECTOR: Selector = Selector::parse("div.event-img > p.event-date").unwrap();
+    static ref SPACE_REGEX: Regex = Regex::new(r"\s+").unwrap();
+}
+
+fn save_subs() {
+    let list = SUB_LIST.lock().unwrap();
+    let _ = fs::write(SUB_FILE, serde_json::to_string(&*list).unwrap());
+}
+
+fn save_events() {
+    let list = EVENT_LIST.lock().unwrap();
+    let _ = fs::write(EVENTS_FILE, serde_json::to_string(&*list).unwrap());
+}
 
 fn add_sub(chat: &Chat) {
     let mut list = SUB_LIST.lock().unwrap();
     if !list.contains(&chat.id) {
         list.push(chat.id);
+        save_subs();
     }
 }
 
 fn remove_sub(chat_id: ChatId) {
     let mut list = SUB_LIST.lock().unwrap();
-    list.retain(|&id| id != chat_id);
+    if list.iter().position(|&id| id == chat_id).is_some() {
+        list.retain(|&id| id != chat_id);
+        save_subs();
+    }
 }
 
 fn add_event(event: Event) {
     let mut list = EVENT_LIST.lock().unwrap();
     list.push(event);
+    save_events();
 }
 
 fn remove_items(to_remove: Vec<Event>) {
     let mut list = EVENT_LIST.lock().unwrap();
     list.retain(|item| !to_remove.contains(item));
+    save_events();
 }
 
 fn clean_old_events(current: &[Event]) {
-    let current_events = EVENT_LIST.lock().unwrap().clone();
-    let outdated: Vec<_> = current_events
+    let existing = EVENT_LIST.lock().unwrap().clone();
+    let outdated: Vec<_> = existing
         .into_iter()
         .filter(|x| !current.contains(x))
         .collect();
-
     remove_items(outdated);
 }
 
 async fn check_website() -> Result<Vec<Event>, String> {
-    let url = "https://sport.univ-cotedazur.fr/fr/";
-    let res = reqwest::get(url).await.unwrap().text().await.unwrap();
-
+    let res = reqwest::get(UNICA_SPORT_URL)
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
     let mut current: Vec<Event> = Vec::new();
+
     let document = Html::parse_document(&res);
 
-    let event_selector = Selector::parse("div.event").unwrap();
-    let title_selector = Selector::parse("div.event-info > h3.event-title").unwrap();
-    let date_selector = Selector::parse("div.event-img > p.event-date").unwrap();
-    let space_re = Regex::new(r"\s+").unwrap();
-
-    for event in document.select(&event_selector) {
-        let title_el = event.select(&title_selector).next().unwrap();
-        let date_el = event.select(&date_selector).next().unwrap();
-
+    for event in document.select(&EVENT_SELECTOR) {
+        let title_el = event.select(&TITLE_SELECTOR).next().unwrap();
+        let date_el = event.select(&DATE_SELECTOR).next().unwrap();
         let title = title_el
             .text()
             .collect::<Vec<_>>()
@@ -79,10 +116,8 @@ async fn check_website() -> Result<Vec<Event>, String> {
             .collect::<Vec<_>>()
             .join(" ")
             .replace('\n', " ");
-        let date = space_re.replace_all(&raw_date, " ").trim().to_string();
-
-        let event = Event { title, date };
-        current.push(event);
+        let date = SPACE_REGEX.replace_all(&raw_date, " ").trim().to_string();
+        current.push(Event { title, date });
     }
 
     clean_old_events(&current);

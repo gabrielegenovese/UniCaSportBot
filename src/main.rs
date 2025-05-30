@@ -9,6 +9,14 @@ const SUB_FILE: &str = "subs.json";
 const EVENTS_FILE: &str = "events.json";
 const UNICA_SPORT_URL: &str = "https://sport.univ-cotedazur.fr/fr/";
 
+macro_rules! debugln {
+    ($($arg:tt)*) => {
+        if std::env::var("DEBUG").map(|v| v == "true").unwrap_or(false) {
+            println!($($arg)*);
+        }
+    }
+}
+
 #[derive(PartialEq, Clone, serde::Serialize, serde::Deserialize)]
 struct Event {
     title: String,
@@ -22,18 +30,28 @@ impl fmt::Display for Event {
 }
 
 static SUB_LIST: Lazy<Mutex<Vec<ChatId>>> = Lazy::new(|| {
-    let data = fs::read_to_string(SUB_FILE)
-        .ok()
-        .and_then(|content| serde_json::from_str(&content).ok())
-        .unwrap_or_default();
+    let path = sub_file();
+    let data = match fs::read_to_string(&path) {
+        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+        Err(_) => {
+            let empty: Vec<ChatId> = Vec::new();
+            let _ = fs::write(&path, serde_json::to_string(&empty).unwrap());
+            empty
+        }
+    };
     Mutex::new(data)
 });
 
 static EVENT_LIST: Lazy<Mutex<Vec<Event>>> = Lazy::new(|| {
-    let data = fs::read_to_string(EVENTS_FILE)
-        .ok()
-        .and_then(|content| serde_json::from_str(&content).ok())
-        .unwrap_or_default();
+    let path = events_file();
+    let data = match fs::read_to_string(&path) {
+        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+        Err(_) => {
+            let empty: Vec<Event> = Vec::new();
+            let _ = fs::write(&path, serde_json::to_string(&empty).unwrap());
+            empty
+        }
+    };
     Mutex::new(data)
 });
 
@@ -44,42 +62,40 @@ lazy_static::lazy_static! {
     static ref SPACE_REGEX: Regex = Regex::new(r"\s+").unwrap();
 }
 
-fn save_subs() {
-    let list = SUB_LIST.lock().unwrap();
-    let _ = fs::write(SUB_FILE, serde_json::to_string(&*list).unwrap());
+fn save_subs(data: &[ChatId]) {
+    let _ = fs::write(sub_file(), serde_json::to_string(data).unwrap());
 }
 
-fn save_events() {
-    let list = EVENT_LIST.lock().unwrap();
-    let _ = fs::write(EVENTS_FILE, serde_json::to_string(&*list).unwrap());
+fn save_events(data: &[Event]) {
+    let _ = fs::write(events_file(), serde_json::to_string(data).unwrap());
 }
 
 fn add_sub(chat: &Chat) {
     let mut list = SUB_LIST.lock().unwrap();
     if !list.contains(&chat.id) {
         list.push(chat.id);
-        save_subs();
+        save_subs(&list);
     }
 }
 
 fn remove_sub(chat_id: ChatId) {
     let mut list = SUB_LIST.lock().unwrap();
-    if list.iter().position(|&id| id == chat_id).is_some() {
+    if let Some(_) = list.iter().position(|&id| id == chat_id) {
         list.retain(|&id| id != chat_id);
-        save_subs();
+        save_subs(&list);
     }
 }
 
 fn add_event(event: Event) {
     let mut list = EVENT_LIST.lock().unwrap();
     list.push(event);
-    save_events();
+    save_events(&list);
 }
 
 fn remove_items(to_remove: Vec<Event>) {
     let mut list = EVENT_LIST.lock().unwrap();
     list.retain(|item| !to_remove.contains(item));
-    save_events();
+    save_events(&list);
 }
 
 fn clean_old_events(current: &[Event]) {
@@ -134,6 +150,19 @@ async fn check_website() -> Result<Vec<Event>, String> {
     }
 }
 
+fn file_path(name: &str) -> String {
+    let dir = std::env::var("UNICABOT_DATA_DIR").unwrap_or_else(|_| ".".to_string());
+    format!("{}/{}", dir, name)
+}
+
+fn sub_file() -> String {
+    file_path(SUB_FILE)
+}
+
+fn events_file() -> String {
+    file_path(EVENTS_FILE)
+}
+
 #[tokio::main]
 async fn main() {
     pretty_env_logger::init();
@@ -154,6 +183,7 @@ async fn main() {
                 Ok(new_events) => {
                     for event in new_events {
                         add_event(event.clone());
+                        debugln!("Added event {}", event);
                         let subs = SUB_LIST.lock().unwrap().clone();
                         for id in subs {
                             let _ = loop_bot
@@ -185,6 +215,8 @@ enum Command {
     Unsubscribe,
     #[command(description = "List known events.")]
     Events,
+    #[command(description = "Check if you are subscribed.")]
+    AmISubscribed,
 }
 
 async fn answer(bot: Bot, msg: Message, cmd: Command) -> ResponseResult<()> {
@@ -195,6 +227,7 @@ async fn answer(bot: Bot, msg: Message, cmd: Command) -> ResponseResult<()> {
         }
         Command::Subscribe => {
             add_sub(&msg.chat);
+            debugln!("Subscribed user {:?}", msg.chat.id);
             bot.send_message(
                 msg.chat.id,
                 "You've been subscribed to UniCa Sport event notifications.",
@@ -220,6 +253,15 @@ async fn answer(bot: Bot, msg: Message, cmd: Command) -> ResponseResult<()> {
                 bot.send_message(msg.chat.id, format!("Current events:\n{}", list))
                     .await?
             }
+        }
+        Command::AmISubscribed => {
+            let list = SUB_LIST.lock().unwrap().clone();
+            let msg_text = if list.contains(&msg.chat.id) {
+                "You are currently subscribed."
+            } else {
+                "You are not subscribed."
+            };
+            bot.send_message(msg.chat.id, msg_text).await?
         }
     };
     Ok(())

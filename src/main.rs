@@ -1,17 +1,30 @@
+use dotenv::dotenv;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use scraper::{Html, Selector};
-use std::{fmt, fs, sync::Mutex};
-use teloxide::{prelude::*, types::Chat, utils::command::BotCommands};
+use std::{
+    fmt::{self},
+    fs,
+    sync::Mutex,
+};
+use teloxide::{
+    prelude::*,
+    types::{Chat, ParseMode},
+    utils::command::BotCommands,
+};
 use tokio::time::{Duration, sleep};
 
 const SUB_FILE: &str = "subs.json";
 const EVENTS_FILE: &str = "events.json";
 const UNICA_SPORT_URL: &str = "https://sport.univ-cotedazur.fr/fr/";
 
+fn is_debug() -> bool {
+    std::env::var("DEBUG").map(|v| v == "true").unwrap_or(false)
+}
+
 macro_rules! debugln {
     ($($arg:tt)*) => {
-        if std::env::var("DEBUG").map(|v| v == "true").unwrap_or(false) {
+        if is_debug() {
             println!($($arg)*);
         }
     }
@@ -21,11 +34,16 @@ macro_rules! debugln {
 struct Event {
     title: String,
     date: String,
+    link: String,
 }
 
 impl fmt::Display for Event {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} ({})", self.title, self.date)
+        write!(
+            f,
+            "<a href='{}'>{}</a> ({})",
+            self.link, self.title, self.date
+        )
     }
 }
 
@@ -56,9 +74,10 @@ static EVENT_LIST: Lazy<Mutex<Vec<Event>>> = Lazy::new(|| {
 });
 
 lazy_static::lazy_static! {
-    static ref EVENT_SELECTOR: Selector = Selector::parse("div.event").unwrap();
-    static ref TITLE_SELECTOR: Selector = Selector::parse("div.event-info > h3.event-title").unwrap();
-    static ref DATE_SELECTOR: Selector = Selector::parse("div.event-img > p.event-date").unwrap();
+    static ref EVENT_SELECTOR: Selector = Selector::parse("div.event").unwrap();                            // extract event from page
+    static ref TITLE_SELECTOR: Selector = Selector::parse("div.event-info > h3.event-title").unwrap();      // extract event title from event
+    static ref DATE_SELECTOR: Selector = Selector::parse("div.event-img > p.event-date").unwrap();          // extract event date from event
+    static ref LINK_SELECTOR: Selector = Selector::parse("div.event-info > p.text-right > a.btn").unwrap(); // extract event link from event
     static ref SPACE_REGEX: Regex = Regex::new(r"\s+").unwrap();
 }
 
@@ -80,7 +99,7 @@ fn add_sub(chat: &Chat) {
 
 fn remove_sub(chat_id: ChatId) {
     let mut list = SUB_LIST.lock().unwrap();
-    if let Some(_) = list.iter().position(|&id| id == chat_id) {
+    if list.contains(&chat_id) {
         list.retain(|&id| id != chat_id);
         save_subs(&list);
     }
@@ -117,7 +136,6 @@ async fn check_website() -> Result<Vec<Event>, String> {
     let mut current: Vec<Event> = Vec::new();
 
     let document = Html::parse_document(&res);
-
     for event in document.select(&EVENT_SELECTOR) {
         let title_el = event.select(&TITLE_SELECTOR).next().unwrap();
         let date_el = event.select(&DATE_SELECTOR).next().unwrap();
@@ -133,7 +151,13 @@ async fn check_website() -> Result<Vec<Event>, String> {
             .join(" ")
             .replace('\n', " ");
         let date = SPACE_REGEX.replace_all(&raw_date, " ").trim().to_string();
-        current.push(Event { title, date });
+        let mut half_link = "".to_owned();
+        for el in event.select(&LINK_SELECTOR) {
+            let href = el.value().attr("href").unwrap();
+            half_link = href.to_string().chars().skip(4).collect(); // skip "/fr/" in href
+        }
+        let link = format!("{UNICA_SPORT_URL}{half_link}");
+        current.push(Event { title, date, link });
     }
 
     clean_old_events(&current);
@@ -165,6 +189,7 @@ fn events_file() -> String {
 
 #[tokio::main]
 async fn main() {
+    dotenv().ok();
     pretty_env_logger::init();
     log::info!("Starting UniCa Sport bot...");
 
@@ -178,7 +203,7 @@ async fn main() {
 
     let checker_handle = tokio::spawn(async move {
         loop {
-            sleep(Duration::from_secs(10)).await;
+            sleep(Duration::from_secs(5)).await;
             match check_website().await {
                 Ok(new_events) => {
                     for event in new_events {
@@ -188,13 +213,19 @@ async fn main() {
                         for id in subs {
                             let _ = loop_bot
                                 .send_message(id, format!("New event: {}", event))
+                                .parse_mode(ParseMode::Html)
                                 .await;
                         }
                     }
                 }
                 Err(e) => log::info!("{}", e),
             }
-            sleep(Duration::from_secs(600)).await;
+            sleep(if is_debug() {
+                Duration::from_secs(10)
+            } else {
+                Duration::from_secs(600)
+            })
+            .await;
         }
     });
 
@@ -207,6 +238,8 @@ async fn main() {
     description = "These commands are supported:"
 )]
 enum Command {
+    #[command(description = "Start this bot and display a welcome message.")]
+    Start,
     #[command(description = "Display this help text.")]
     Help,
     #[command(description = "Subscribe to event notifications.")]
@@ -221,6 +254,13 @@ enum Command {
 
 async fn answer(bot: Bot, msg: Message, cmd: Command) -> ResponseResult<()> {
     match cmd {
+        Command::Start => {
+            bot.send_message(
+                msg.chat.id,
+                "👋 Welcome to UniCa Sport Bot!\n\nUse /subscribe to receive notifications about new UniCa's sport events. Need help? Type /help to see all available commands.",
+            )
+            .await?
+        }
         Command::Help => {
             bot.send_message(msg.chat.id, Command::descriptions().to_string())
                 .await?
@@ -251,6 +291,7 @@ async fn answer(bot: Bot, msg: Message, cmd: Command) -> ResponseResult<()> {
                     .collect::<Vec<_>>()
                     .join("\n");
                 bot.send_message(msg.chat.id, format!("Current events:\n{}", list))
+                    .parse_mode(ParseMode::Html)
                     .await?
             }
         }

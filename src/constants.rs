@@ -12,3 +12,18 @@ pub const UNSUB_MSG: &str = "You've been unsubscribed from notifications.";
 pub const IAMSUB_MSG: &str = "You are currently subscribed.";
 pub const IAMNOTSUB_MSG: &str = "You are not subscribed.";
 pub const NOEVENTS: &str = "No known events yet.";
+
+pub fn debug_is(what: bool) -> bool {
+    std::env::var("DEBUG")
+        .map(|v| v == what.to_string())
+        .unwrap_or(false)
+}
+
+#[macro_export]
+macro_rules! debugln {
+    ($($arg:tt)*) => {
+        if debug_is(true) {
+            println!($($arg)*);
+        }
+    }
+}

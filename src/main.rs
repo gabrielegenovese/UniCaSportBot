@@ -2,12 +2,18 @@ mod commands;
 mod constants;
 mod events;
 mod scraper;
-mod storage;
+mod subs;
 
 use commands::reply_process;
 use dotenv::dotenv;
 use scraper::scraper_process;
 use teloxide::prelude::*;
+
+pub fn debug_is(what: bool) -> bool {
+    std::env::var("DEBUG")
+        .map(|v| v == what.to_string())
+        .unwrap_or(false)
+}
 
 #[tokio::main]
 async fn main() {

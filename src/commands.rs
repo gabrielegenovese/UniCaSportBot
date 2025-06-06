@@ -1,6 +1,7 @@
 use crate::constants::*;
+use crate::debugln;
 use crate::events::{EVENT_LIST, Event};
-use crate::storage::{SUB_LIST, add_sub, remove_sub};
+use crate::subs::{SUB_LIST, add_sub, remove_sub};
 use teloxide::types::ParseMode;
 use teloxide::utils::command::BotCommands;
 use teloxide::{RequestError, prelude::*};
@@ -54,6 +55,7 @@ async fn manage_help_cmd(bot: Bot, msg: Message) -> Result<Message, RequestError
 
 async fn manage_sub_cmd(bot: Bot, msg: Message) -> Result<Message, RequestError> {
     add_sub(msg.chat.id);
+    debugln!("Subscribed user {:?}", msg.chat.id);
     bot.send_message(msg.chat.id, SUB_MSG).await
 }
 

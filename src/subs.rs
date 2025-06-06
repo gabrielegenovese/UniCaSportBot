@@ -20,24 +20,14 @@ pub fn add_sub(chat_id: ChatId) {
     let mut list = SUB_LIST.lock().unwrap();
     if !list.contains(&chat_id) {
         list.push(chat_id);
-        save_subs(&list);
+        save_subs_file(&list);
     }
 }
 
 pub fn remove_sub(chat_id: ChatId) {
     let mut list = SUB_LIST.lock().unwrap();
     list.retain(|&id| id != chat_id);
-    save_subs(&list);
-}
-
-fn save_subs(data: &[ChatId]) {
-    let _ = fs::write(sub_file(), serde_json::to_string(data).unwrap());
-}
-
-pub fn debug_is(what: bool) -> bool {
-    std::env::var("DEBUG")
-        .map(|v| v == what.to_string())
-        .unwrap_or(false)
+    save_subs_file(&list);
 }
 
 pub fn file_path(name: &str) -> String {
@@ -47,4 +37,8 @@ pub fn file_path(name: &str) -> String {
 
 pub fn sub_file() -> String {
     file_path(SUB_FILE)
+}
+
+fn save_subs_file(data: &[ChatId]) {
+    let _ = fs::write(sub_file(), serde_json::to_string(data).unwrap());
 }

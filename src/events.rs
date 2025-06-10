@@ -109,7 +109,7 @@ fn parse_events(html: &str) -> Vec<Event> {
 
 fn parse_event(element: scraper::element_ref::ElementRef) -> Option<Event> {
     let title = get_event_title(element);
-    if title.contains("TEST") {
+    if title.to_lowercase().contains("test") {
         return None;
     }
     let date = get_event_date(element);
